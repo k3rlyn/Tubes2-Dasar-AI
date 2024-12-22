@@ -1,79 +1,84 @@
 import numpy as np
-from collections import Counter
-import pickle
+import pandas as pd
+from scipy.spatial.distance import cdist
+from scipy.sparse import csr_matrix
 
 class KNN:
-    def __init__(self, k=5, metric='euclidean', p=2):
+    def __init__(self, k: int = 3, distance_metric: str = 'euclidean'):
+        """
+        Initialize KNN with more flexible distance metric options.
+        
+        Parameters:
+        -----------
+            k (int, optional): Number of nearest neighbors to consider (default=3).
+            distance_metric (str, optional): Distance metric to use for neighbor calculation (default='euclidean', 'manhattan', 'minkowski').
+        """
         self.k = k
-        self.metric = metric
-        self.p = p
-        self.X_train = None
-        self.y_train = None
-
-    def fit(self, X, y):
-        self.X_train = np.array(X)
-        self.y_train = np.array(y)
-        return self
-
-    def _calculate_distance(self, x1, x2):
-        if self.metric == 'euclidean':
-            return np.sqrt(np.sum((x1 - x2) ** 2))
-        elif self.metric == 'manhattan':
-            return np.sum(np.abs(x1 - x2))
-        elif self.metric == 'minkowski':
-            return np.power(np.sum(np.power(np.abs(x1 - x2), self.p)), 1/self.p)
+        if distance_metric == "manhattan":
+            self.distance_metric = "cityblock"
         else:
-            raise ValueError(f"Unsupported metric: {self.metric}")
-
-    def _get_neighbors(self, x):
-        # Calculate distances to all training points
-        distances = np.array([self._calculate_distance(x, x_train) 
-                            for x_train in self.X_train])
+            self.distance_metric = distance_metric
+    
+    def _ensure_ndarray(self, X):
+        """
+        Ensure the input data is converted to a NumPy ndarray.
         
-        # Get indices of k nearest neighbors
-        k_indices = np.argsort(distances)[:self.k]
+        Parameters:
+        -----------
+            X (pd.DataFrame, csr_matrix, or ndarray): Input data to convert.
         
-        # Return labels of k nearest neighbors
-        return self.y_train[k_indices]
-
-    def predict(self, X):
-        X = np.array(X)
+        Returns:
+        --------
+            np.ndarray: Converted data as an ndarray.
+        """
+        if isinstance(X, pd.DataFrame):
+            return X.values
+        elif isinstance(X, csr_matrix):
+            return X.toarray()
+        elif isinstance(X, np.ndarray):
+            return X
+        if isinstance(X, pd.Series):
+            return X.values
+        else:
+            raise TypeError("Input data must be a DataFrame, csr_matrix, or ndarray.")
+    
+    def fit(self, X_train, y_train):
+        """
+        Store training data after ensuring it's an ndarray.
+        
+        Parameters:
+        -----------
+            X_train (pd.DataFrame, csr_matrix, or ndarray): Feature matrix for training.
+            y_train (pd.Series, or ndarray): Target labels for training.
+        """
+        self.X_train = self._ensure_ndarray(X_train)
+        self.y_train = np.array(y_train)
+    
+    def predict(self, X_test) -> np.ndarray:
+        """
+        Predict labels for test points in a memory-efficient manner.
+        
+        Parameters:
+        -----------
+            X_test (pd.DataFrame, csr_matrix, or ndarray): Feature matrix for testing
+        
+        Returns:
+        --------
+            np.ndarray: Predicted labels for test points
+        """
+        X_test = self._ensure_ndarray(X_test)
         predictions = []
         
-        # Make prediction for each sample
-        for x in X:
-            # Get k nearest neighbors
-            neighbors = self._get_neighbors(x)
+        for test_point in X_test:
+            distances = cdist([test_point], self.X_train, metric=self.distance_metric)
             
-            # Majority vote
-            most_common = Counter(neighbors).most_common(1)
-            predictions.append(most_common[0][0])
+            k_indices = np.argsort(distances[0])[:self.k]
+            
+            k_nearest_labels = self.y_train[k_indices]
+
+            unique_labels, counts = np.unique(k_nearest_labels, return_counts=True)
+            most_common_label = unique_labels[np.argmax(counts)]
+            
+            predictions.append(most_common_label)
         
         return np.array(predictions)
-
-    def save_model(self, filename):
-        """Save model to file"""
-        model_data = {
-            'k': self.k,
-            'metric': self.metric,
-            'p': self.p,
-            'X_train': self.X_train,
-            'y_train': self.y_train
-        }
-        with open(filename, 'wb') as f:
-            pickle.dump(model_data, f)
-
-    @classmethod
-    def load_model(cls, filename):
-        """Load model from file"""
-        with open(filename, 'rb') as f:
-            model_data = pickle.load(f)
-        
-        model = cls(
-            k=model_data['k'],
-            metric=model_data['metric'],
-            p=model_data['p']
-        )
-        model.X_train = model_data['X_train']
-        model.y_train = model_data['y_train']
-        return model
